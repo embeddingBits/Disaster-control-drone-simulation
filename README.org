@@ -1,5 +1,0 @@
-#+title: 5g Drone Control Simulation in NS3
-
-This is a 5g drone control simulation in NS3 to simulate drones monitoring situations like monitoring power plants and rescue operations with signals.
-
-This can simulated with NetAnim (for 2d) and then NetSimulyzer (for 3d).
