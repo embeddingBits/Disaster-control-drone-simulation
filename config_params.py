@@ -18,9 +18,11 @@ BATTERY_DRAIN_MOVING = 25  # J/s
 BATTERY_DRAIN_RELAY = 30  # J/s 
 
 # 5G NETWORK PARAMETERS
-TOWER_POSITION = np.array([250, 250, 100])  # Central 5G tower
+TOWER_POSITION = np.array([250, 250, 100])
+STATION_POSITION = np.array([250, 250, 0])
 MAX_5G_RANGE = 300  # meters
 LINK_CAPACITY_MAX = 100  # Mbps
+TOWER_TO_STATION_CAPACITY = 1000  # Mbps (wired/fiber connection)
 RELAY_HOP_PENALTY = 0.7  # capacity reduction per hop
 MIN_CLUSTER_SIZE = 3  # drones needed for cluster
 CLUSTER_FORMATION_THRESHOLD = 10  # users to trigger cluster
@@ -108,22 +110,43 @@ class Tower:
         self.connected_drones = []
 
 
+class MonitoringStation:
+    """Drone monitoring base station - receives reports from field via tower"""
+    
+    def __init__(self, pos):
+        self.pos = np.array(pos, dtype=float)
+        self.received_reports = []
+        self.active_drones = []
+        
+    def receive_report(self, report):
+        """Receive detection report from tower"""
+        self.received_reports.append(report)
+
+
 class OperatorNotification:
     """System to notify operator of detections"""
     
     def __init__(self):
         self.notifications = []
         
-    def alert_victim_detected(self, drone_id, user, time):
+    def alert_victim_detected(self, drone_id, user, time, path_info=None):
         msg = {
             'time': time,
             'drone_id': drone_id,
             'user_id': user.id,
             'group_size': user.group_size,
+            'path_info': path_info
         }
         self.notifications.append(msg)
-        print(f"[ALERT t={time}s] Drone {drone_id} detected {user.group_size} "
-              f"person(s) at ({user.pos[0]:.1f}, {user.pos[1]:.1f})")
+        
+        if path_info:
+            print(f"[ALERT t={time}s] Drone {drone_id} detected {user.group_size} "
+                  f"person(s) at ({user.pos[0]:.1f}, {user.pos[1]:.1f})")
+            print(f"  → Report path to STATION: {' → '.join(path_info['path'])} "
+                  f"({path_info['hops']} hops, {path_info['capacity']:.1f} Mbps)")
+        else:
+            print(f"[ALERT t={time}s] Drone {drone_id} detected {user.group_size} "
+                  f"person(s) at ({user.pos[0]:.1f}, {user.pos[1]:.1f})")
         
     def alert_cluster_formed(self, cluster_id, drones, users, time):
         total_people = sum(u.group_size for u in users)
@@ -152,12 +175,25 @@ def calculate_link_capacity(dist, los=True):
     return max(0, capacity)
 
 
-def build_network_graph(drones, tower):
-    """Build network topology graph"""
+def build_network_graph(drones, tower, station):
+    """Build network topology graph including monitoring station"""
     G = nx.DiGraph()
+    
+    # Add monitoring station node
+    G.add_node('station', pos=station.pos, type='station')
     
     # Add tower node
     G.add_node('tower', pos=tower.pos, type='tower')
+    
+    # Add wired link: Tower <--> Station (bidirectional, high capacity)
+    G.add_edge('tower', 'station', 
+               capacity=TOWER_TO_STATION_CAPACITY, 
+               distance=0, 
+               link_type='wired')
+    G.add_edge('station', 'tower', 
+               capacity=TOWER_TO_STATION_CAPACITY, 
+               distance=0, 
+               link_type='wired')
     
     # Add drone nodes
     for d in drones:
@@ -201,6 +237,28 @@ def find_best_path_to_tower(G, drone_id):
             min_capacity = min(min_capacity, edge_cap)
         
         effective_capacity = min_capacity * (RELAY_HOP_PENALTY ** (len(path)-2))
+        return path, len(path)-1, effective_capacity
+    except nx.NetworkXNoPath:
+        return None, None, 0
+
+
+def find_path_to_station(G, drone_id):
+    """Find path from drone to monitoring station via tower"""
+    try:
+        # Path: Drone → [relay drones] → Tower → Station
+        path = nx.shortest_path(G, f'd{drone_id}', 'station', 
+                               weight=lambda u, v, d: 1/max(d['capacity'], 1))
+        
+        # Calculate effective capacity
+        min_capacity = float('inf')
+        for i in range(len(path)-1):
+            edge_cap = G[path[i]][path[i+1]]['capacity']
+            min_capacity = min(min_capacity, edge_cap)
+        
+        # Count wireless hops (exclude tower-station wired link)
+        wireless_hops = len([p for p in path if p.startswith('d')]) - 1
+        effective_capacity = min_capacity * (RELAY_HOP_PENALTY ** max(0, wireless_hops))
+        
         return path, len(path)-1, effective_capacity
     except nx.NetworkXNoPath:
         return None, None, 0
@@ -266,18 +324,49 @@ def form_drone_cluster(drones, cluster_center, cluster_id):
 
 # SIMULATION UPDATE LOGIC
 
-def update_simulation(drones, users, tower, current_time, clusters_formed, 
+def update_simulation(drones, users, tower, station, current_time, clusters_formed, 
                       next_cluster_id, operator):
     """Main simulation update step"""
     
-    # 1. Scan for victims
+    # 1. Build network topology
+    G = build_network_graph(drones, tower, station)
+    
+    # 2. Scan for victims and report to monitoring station
     for d in drones:
         if d.alive and d.mode in ["SEARCH", "RESCUE"]:
             detections = d.scan_for_victims(users)
+            
             for u in detections:
-                operator.alert_victim_detected(d.id, u, current_time)
+                # Check if drone can reach monitoring station
+                path, hops, capacity = find_path_to_station(G, d.id)
+                
+                if path and capacity > 0:
+                    # Successfully report to monitoring station
+                    path_info = {
+                        'path': path,
+                        'hops': hops,
+                        'capacity': capacity
+                    }
+                    
+                    report = {
+                        'time': current_time,
+                        'drone_id': d.id,
+                        'user_id': u.id,
+                        'group_size': u.group_size,
+                        'location': u.pos.copy(),
+                        'path': path,
+                        'hops': hops,
+                        'capacity': capacity
+                    }
+                    station.receive_report(report)
+                    operator.alert_victim_detected(d.id, u, current_time, path_info)
+                else:
+                    # No path to station - report failed
+                    print(f"[FAILED t={current_time}s] Drone {d.id} detected "
+                          f"{u.group_size} person(s) but NO PATH to monitoring station!")
+                    operator.alert_victim_detected(d.id, u, current_time, None)
     
-    # 2. Detect and handle clusters
+    # 3. Detect and handle clusters
     user_clusters = detect_user_clusters(users)
     for cluster_users in user_clusters:
         cluster_center = np.mean([u.pos for u in cluster_users], axis=0)
@@ -291,9 +380,6 @@ def update_simulation(drones, users, tower, current_time, clusters_formed,
                 operator.alert_cluster_formed(next_cluster_id, cluster_drones, 
                                              cluster_users, current_time)
                 next_cluster_id += 1
-    
-    # 3. Build network topology
-    G = build_network_graph(drones, tower)
     
     # 4. Update drone targets for non-clustered drones
     for d in drones:
