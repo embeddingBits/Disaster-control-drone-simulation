@@ -1,28 +1,30 @@
 import numpy as np
 import networkx as nx
 
-# SIMULATION PARAMETERS
-AREA_SIZE = 500  # meters
+# Speed is in m/s and distance in meters
+# Bandwidth in Mbps
+# Simulation parameters
+AREA_SIZE = 500  
 SIM_TIME = 600  # seconds 
 DT = 1  # time step
 
 # DRONE SPECIFICATIONS
 NUM_DRONES = 8
-DRONE_SPEED = 5.0  # m/s
-DRONE_ALTITUDE = 80  # meters
-COVERAGE_RADIUS = 120  # meters
-SEARCH_RADIUS = 150  # meters for victim detection
-BATTERY_INIT = 15000  # joules
-BATTERY_DRAIN_IDLE = 15  # J/s 
-BATTERY_DRAIN_MOVING = 25  # J/s
-BATTERY_DRAIN_RELAY = 30  # J/s 
+DRONE_SPEED = 5.0  
+DRONE_ALTITUDE = 80 
+COVERAGE_RADIUS = 120 
+SEARCH_RADIUS = 150  # For victim detection
+BATTERY_INIT = 15000
+BATTERY_DRAIN_IDLE = 15  
+BATTERY_DRAIN_MOVING = 25
+BATTERY_DRAIN_RELAY = 30 
 
 # 5G NETWORK PARAMETERS
 TOWER_POSITION = np.array([250, 250, 100])
 STATION_POSITION = np.array([250, 250, 0])
-MAX_5G_RANGE = 300  # meters
-LINK_CAPACITY_MAX = 100  # Mbps
-TOWER_TO_STATION_CAPACITY = 1000  # Mbps (wired/fiber connection)
+MAX_5G_RANGE = 300
+LINK_CAPACITY_MAX = 100
+TOWER_TO_STATION_CAPACITY = 1000  
 RELAY_HOP_PENALTY = 0.7  # capacity reduction per hop
 MIN_CLUSTER_SIZE = 3  # drones needed for cluster
 CLUSTER_FORMATION_THRESHOLD = 10  # users to trigger cluster
