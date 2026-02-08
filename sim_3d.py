@@ -41,10 +41,10 @@ detected_scatter_3d = ax_3d.scatter([], [], [], c='orange', s=80, marker='*',
 served_scatter_3d = ax_3d.scatter([], [], [], c='green', s=90, marker='s', 
                                   edgecolors='black', linewidths=1, label="Served")
 tower_3d = ax_3d.scatter([TOWER_POSITION[0]], [TOWER_POSITION[1]], [TOWER_POSITION[2]], 
-                         c='purple', s=400, marker='s', edgecolors='black', 
+                         c='purple', s=100, marker='s', edgecolors='black', 
                          linewidths=3, label="5G Tower")
 station_3d = ax_3d.scatter([STATION_POSITION[0]], [STATION_POSITION[1]], [STATION_POSITION[2]], 
-                          c='darkgreen', s=500, marker='D', edgecolors='black', 
+                          c='darkgreen', s=100, marker='D', edgecolors='black', 
                           linewidths=3, label="Monitoring Station")
 
 # Add ground plane grid for reference
