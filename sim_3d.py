@@ -68,9 +68,11 @@ def animate(frame):
     global current_time, next_cluster_id, link_lines_3d
     current_time = frame
     
+    # Update simulation state, including drone movement, battery drain, returns, and wave launches
     G, next_cluster_id = update_simulation(drones, users, tower, station, current_time, 
                                            clusters_formed, next_cluster_id, operator)
     
+    # Filter for alive drones *after* update_simulation has potentially changed their status
     alive_drones = [d for d in drones if d.alive]
     
     for line in link_lines_3d:
@@ -125,6 +127,19 @@ def animate(frame):
                                  [d.pos[2], d2.pos[2]], 
                                  color=color, alpha=alpha, linewidth=width)[0]
                 link_lines_3d.append(line)
+
+    # 5. Check for wave launch
+    # Count drones that are operational (not returning, not landed, and alive)
+    operational_drones = [d for d in drones if d.alive and d.mode not in ["RETURNING", "LANDED"]]
+    
+    # If substantial portion of fleet is out of action, launch new wave
+    # Threshold: less than 50% of NUM_DRONES are operational
+    if len(operational_drones) <= NUM_DRONES * 0.5:
+         # Launch enough to get back to full strength + buffer
+         num_to_launch = NUM_DRONES
+         new_wave = station.launch_wave(num_to_launch)
+         drones.extend(new_wave)
+
     
     # Update drone positions with colors by mode
     if alive_drones:
@@ -135,6 +150,8 @@ def animate(frame):
                 colors.append('blue')
             elif d.mode == "RELAY":
                 colors.append('cyan')
+            elif d.mode == "RETURNING":
+                colors.append('orange') # Returning drones are orange
             else:
                 colors.append('red')
         drone_scatter_3d._offsets3d = (dx, dy, dz)
@@ -182,7 +199,8 @@ def animate(frame):
         f"Served: {served_people}/{total_people} ({100*served_people/max(1,total_people):.1f}%)  |  "
         f"Throughput: {total_throughput:.1f} Mbps  |  "
         f"Clusters: {len(clusters_formed)}  |  "
-        f"Station Reports: {reports_received}"
+        f"Station Reports: {reports_received}  |  "
+        f"Wave: {station.waves_launched + 1}"
     )
     
     return (drone_scatter_3d, user_scatter_3d, detected_scatter_3d, 

@@ -12,12 +12,14 @@ DT = 1  # time step
 NUM_DRONES = 8
 DRONE_SPEED = 5.0  
 DRONE_ALTITUDE = 80 
+DRONE_RETURN_ALTITUDE = 100
 COVERAGE_RADIUS = 120 
 SEARCH_RADIUS = 150  # For victim detection
 BATTERY_INIT = 15000
 BATTERY_DRAIN_IDLE = 15  
 BATTERY_DRAIN_MOVING = 25
 BATTERY_DRAIN_RELAY = 30 
+BATTERY_RETURN_THRESHOLD = 0.3  # Return when 30% battery remains (dynamic check implemented in Drone)
 
 # 5G NETWORK PARAMETERS
 TOWER_POSITION = np.array([250, 250, 100])
@@ -45,7 +47,7 @@ class Drone:
         self.battery = BATTERY_INIT
         self.alive = True
         self.target = None
-        self.mode = "SEARCH"  # SEARCH, RESCUE, RELAY, CLUSTER
+        self.mode = "SEARCH"  # SEARCH, RESCUE, RELAY, CLUSTER, RETURNING, LANDED
         self.cluster_id = None
         self.detected_victims = []
         
@@ -55,6 +57,13 @@ class Drone:
             return
         direction = self.target - self.pos
         dist = np.linalg.norm(direction[:2])  # 2D distance
+        
+        if self.mode == "RETURNING":
+             if dist < 5: # Close to station
+                 self.mode = "LANDED"
+                 self.alive = False # effectively removed from active duty
+                 return
+
         if dist < 1e-2:
             return
         step = min(DRONE_SPEED * DT, dist)
@@ -73,6 +82,27 @@ class Drone:
         if self.battery <= 0:
             self.battery = 0
             self.alive = False
+
+    def check_return_status(self, station_pos):
+        """Check if drone needs to return to base"""
+        if self.mode in ["RETURNING", "LANDED"] or not self.alive:
+            return
+
+        # Calculate distance to station
+        dist_to_station = np.linalg.norm(self.pos - station_pos)
+        
+        # Calculate energy needed to return (with safety margin)
+        # Time to return = distance / speed
+        time_to_return = dist_to_station / DRONE_SPEED
+        # Energy needed = time * drain_rate * safety_factor
+        energy_needed = time_to_return * BATTERY_DRAIN_MOVING * 1.5
+        
+        if self.battery < energy_needed:
+            self.mode = "RETURNING"
+            self.target = station_pos.copy()
+            self.target[2] = DRONE_RETURN_ALTITUDE  # Fly higher to return
+            # Release from cluster if needed
+            self.cluster_id = None
             
     def scan_for_victims(self, users):
         """Detect victims within search radius"""
@@ -118,7 +148,38 @@ class MonitoringStation:
     def __init__(self, pos):
         self.pos = np.array(pos, dtype=float)
         self.received_reports = []
+        self.received_reports = []
         self.active_drones = []
+        self.waves_launched = 0
+        self.total_drones_launched = 0
+
+    def launch_wave(self, num_drones):
+        """Launch a new wave of drones"""
+        new_drones = []
+        start_id = self.total_drones_launched
+        
+        for i in range(num_drones):
+            # Launch in a circle pattern
+            angle = i * (2 * np.pi / num_drones)
+            # Start near station
+            radius = 10 
+            x = self.pos[0] + radius * np.cos(angle)
+            y = self.pos[1] + radius * np.sin(angle)
+            
+            drone = Drone(start_id + i, [x, y, DRONE_ALTITUDE])
+            # Spread out targets
+            search_angle = angle + (self.waves_launched * 0.5) # Shift angle for new wave
+            search_radius = AREA_SIZE * 0.4
+            tx = AREA_SIZE/2 + search_radius * np.cos(search_angle)
+            ty = AREA_SIZE/2 + search_radius * np.sin(search_angle)
+            
+            drone.target = np.array([tx, ty, DRONE_ALTITUDE])
+            new_drones.append(drone)
+            
+        self.total_drones_launched += num_drones
+        self.waves_launched += 1
+        print(f"[STATION] Launched Wave {self.waves_launched} with {num_drones} drones")
+        return new_drones
         
     def receive_report(self, report):
         """Receive detection report from tower"""
@@ -383,6 +444,18 @@ def update_simulation(drones, users, tower, station, current_time, clusters_form
                                              cluster_users, current_time)
                 next_cluster_id += 1
     
+    # 3.5. Prune dead clusters (where drones have left)
+    dead_clusters = []
+    for cluster_key, cid in clusters_formed.items():
+        # Check if any active drone is still serving this cluster
+        serving_drones = [d for d in drones if d.alive and d.mode == "CLUSTER" and d.cluster_id == cid]
+        if not serving_drones:
+            dead_clusters.append(cluster_key)
+            print(f"[CLUSTER] Cluster {cid} dissolved (drones returned/died)")
+            
+    for key in dead_clusters:
+        del clusters_formed[key]
+    
     # 4. Update drone targets for non-clustered drones
     for d in drones:
         if not d.alive:
@@ -424,6 +497,8 @@ def update_simulation(drones, users, tower, station, current_time, clusters_form
     # 6. Move drones and drain batteries
     for d in drones:
         if d.alive:
+            # Check if needs to return
+            d.check_return_status(station.pos)
             d.move()
             d.drain()
     
