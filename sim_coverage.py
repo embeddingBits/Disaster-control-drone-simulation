@@ -55,6 +55,13 @@ def animate(frame):
         clusters_formed, next_cluster_id, operator
     )
 
+    # Check for wave launch (same logic as 3D sim)
+    operational_drones = [d for d in drones if d.alive and d.mode not in ["RETURNING", "LANDED"]]
+    if len(operational_drones) <= NUM_DRONES * 0.5:
+         num_to_launch = NUM_DRONES
+         new_wave = station.launch_wave(num_to_launch)
+         drones.extend(new_wave)
+
     alive_drones = [d for d in drones if d.alive]
 
     ax.clear()
@@ -104,7 +111,10 @@ def animate(frame):
 
     # Drone coverage circles
     for d in alive_drones:
-        color = 'blue' if d.mode == "CLUSTER" else 'cyan' if d.mode == "RELAY" else 'red'
+        if d.mode == "RETURNING": color = 'orange'
+        elif d.mode == "CLUSTER": color = 'blue'
+        elif d.mode == "RELAY":   color = 'cyan'
+        else:                     color = 'red'
         alpha_fill = 0.22 if d.mode == "CLUSTER" else 0.14
         ax.add_patch(Circle(d.pos[:2], COVERAGE_RADIUS, fc=color, ec=color, alpha=alpha_fill))
         ax.add_patch(Circle(d.pos[:2], SEARCH_RADIUS, fc='none', ec=color, alpha=0.35, ls=':', lw=1.1))
@@ -150,8 +160,12 @@ def animate(frame):
 
     # Drones
     if alive_drones:
-        colors = ['blue' if d.mode == "CLUSTER" else 'cyan' if d.mode == "RELAY" else 'red'
-                  for d in alive_drones]
+        colors = []
+        for d in alive_drones:
+            if d.mode == "RETURNING": colors.append('orange')
+            elif d.mode == "CLUSTER": colors.append('blue')
+            elif d.mode == "RELAY":   colors.append('cyan')
+            else:                     colors.append('red')
         ax.scatter([d.pos[0] for d in alive_drones], [d.pos[1] for d in alive_drones],
                    c=colors, s=220, marker='^', edgecolor='black', lw=1.8, zorder=10)
 
@@ -187,6 +201,8 @@ def animate(frame):
         f"Served: {srv_p}/{tot_p} ({srv_p/tot_p*100:.1f}%)   |   "
         f"Throughput: {tot_thr:.1f} Mbps   |   "
         f"Clusters: {len(clusters_formed)}   |   "
+        f"Clusters: {len(clusters_formed)}   |   "
+        f"Wave: {station.waves_launched}   |   "
         f"Station reports: {reports}"
     )
 
